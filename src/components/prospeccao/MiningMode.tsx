@@ -7,10 +7,11 @@ import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import {
   Upload, Play, Pause, Download, Filter, MapPin, Loader2,
-  Pickaxe, AlertTriangle, SlidersHorizontal, Layers
+  Pickaxe, AlertTriangle, SlidersHorizontal, Layers, Map
 } from 'lucide-react';
 import { BrasilAPICompany } from '@/hooks/useBrasilAPI';
 import { NICHE_FILTERS, PORTE_OPTIONS, UF_OPTIONS, CARGO_PROFILES, getProfileSummary } from '@/lib/cnae-profiles';
@@ -18,6 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { MiningLeadRow } from './MiningLeadRow';
 import { LeadDetailPanel } from './LeadDetailPanel';
+import { GoogleMapsSearch } from './GoogleMapsSearch';
 
 interface EnrichedCompany {
   cnpj: string;
@@ -149,14 +151,14 @@ export function MiningMode() {
   const progress = companies.length > 0 ? Math.round(((successCount + errorCount) / companies.length) * 100) : 0;
 
   // Hot zones
-  const bairroGroups = new Map<string, number>();
+  const bairroGroupsObj: Record<string, number> = {};
   filtered.forEach(c => {
     if (c.data?.bairro) {
       const b = c.data.bairro.toUpperCase();
-      bairroGroups.set(b, (bairroGroups.get(b) || 0) + 1);
+      bairroGroupsObj[b] = (bairroGroupsObj[b] || 0) + 1;
     }
   });
-  const hotZones = Array.from(bairroGroups.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const hotZones = Object.entries(bairroGroupsObj).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const hotZoneBairros = new Set(hotZones.map(([b]) => b));
 
   // Profile summary
@@ -289,7 +291,23 @@ export function MiningMode() {
   const isImported = selectedCNPJ ? importedCNPJs.has(selectedCNPJ.replace(/\D/g, '')) : false;
 
   return (
-    <div className="space-y-4">
+    <Tabs defaultValue="google" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="google" className="gap-2">
+          <Map className="h-4 w-4" />
+          Google Maps
+        </TabsTrigger>
+        <TabsTrigger value="cnpj" className="gap-2">
+          <Pickaxe className="h-4 w-4" />
+          Mineração por CNPJ
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="google">
+        <GoogleMapsSearch />
+      </TabsContent>
+
+      <TabsContent value="cnpj" className="space-y-4">
       {/* Upload & Controls */}
       <Card>
         <CardHeader className="pb-3">
@@ -503,6 +521,7 @@ export function MiningMode() {
           </CardContent>
         </Card>
       )}
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
