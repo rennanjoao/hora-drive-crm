@@ -1,7 +1,1 @@
-project_id = "mcwqgksnsxfworomwhhc"
-
-[functions.track-email]
-verify_jwt = false
-
-[functions.send-email]
-verify_jwt = false
+project_id = "xigarcdvwcrdqhkkmepc"
