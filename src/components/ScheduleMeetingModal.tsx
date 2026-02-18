@@ -50,6 +50,11 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
   const [selectedLeadId, setSelectedLeadId] = useState<string>('');
   const activeLead = lead || leads.find(l => l.id === selectedLeadId) || null;
   const { profile, isAdmin } = useAuth();
+
+  // Reset selectedLeadId when modal closes
+  useEffect(() => {
+    if (!open) setSelectedLeadId('');
+  }, [open]);
   const [sdrs, setSdrs] = useState<SDRProfile[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [saving, setSaving] = useState(false);
@@ -102,7 +107,11 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
   }, [isAdmin]);
 
   const handleSave = async () => {
-    if (!activeLead || !profile || !selectedDate || !form.start_time) return;
+    if (!activeLead || !profile || !selectedDate || !form.start_time) {
+      if (!activeLead) toast.error('Selecione uma empresa antes de agendar.');
+      if (!selectedDate) toast.error('Selecione uma data para a reunião.');
+      return;
+    }
 
     const sdrId = form.sdr_id || profile.id;
 
@@ -111,7 +120,8 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
       const meetingDate = new Date(`${format(selectedDate, 'yyyy-MM-dd')}T${form.start_time}`);
       const dateStr = format(selectedDate, 'ddMMyyyy');
       const companySlug = sanitizeForUrl(activeLead.nome_fantasia || activeLead.razao_social);
-      const jitsiLink = `https://meet.jit.si/NaHora-${companySlug}-${dateStr}`;
+      const uniqueId = Math.random().toString(36).substring(2, 7).toUpperCase();
+      const jitsiLink = `https://meet.jit.si/NaHora-${companySlug}-${dateStr}-${uniqueId}`;
 
       const { error } = await supabase.from('meetings').insert({
         lead_id: activeLead.id,
@@ -123,6 +133,8 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
         duration_minutes: parseInt(form.duration),
         jitsi_link: jitsiLink,
         contact_name: form.contact_name || null,
+        status: 'agendada',
+        meeting_type: 'scheduled',
       });
 
       if (error) throw error;
@@ -131,7 +143,7 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
       await supabase.from('lead_timeline').insert({
         lead_id: activeLead.id,
         author_id: profile.id,
-        content: `📅 Reunião agendada: ${form.title} — ${format(meetingDate, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`,
+        content: `📅 Reunião agendada: ${form.title} — ${format(meetingDate, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })} — Link: ${jitsiLink}`,
         contact_type: 'meeting',
       });
 
@@ -140,9 +152,9 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
       setSelectedDate(undefined);
       setForm({ title: '', description: '', contact_name: '', start_time: '09:00', duration: '30', sdr_id: profile?.id || '' });
       onMeetingCreated?.();
-    } catch (error) {
-      console.error('Error creating meeting:', error);
-      toast.error('Erro ao agendar reunião');
+    } catch (err: any) {
+      console.error('Error creating meeting:', err);
+      toast.error(err?.message || 'Erro ao agendar reunião');
     } finally {
       setSaving(false);
     }
@@ -278,8 +290,12 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
 
           <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
             <p className="font-medium text-foreground mb-1">🔗 Link da reunião (Jitsi Meet)</p>
-            <p>O link será gerado automaticamente ao salvar.</p>
+            <p>Um link único será gerado automaticamente ao salvar a reunião.</p>
           </div>
+
+          {!activeLead && (
+            <p className="text-xs text-destructive text-center">⚠️ Selecione uma empresa para habilitar o agendamento</p>
+          )}
 
           <Button onClick={handleSave} className="w-full" disabled={saving || !form.title || !selectedDate || !activeLead}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Video className="h-4 w-4 mr-2" />}
