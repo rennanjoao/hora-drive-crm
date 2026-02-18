@@ -6,11 +6,13 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Loader2, Download, Mail, MessageCircle, MapPin, Phone, Globe,
-  Star, Building2, AlertTriangle, CheckCircle, Image as ImageIcon, ExternalLink, Map
+  Star, Building2, AlertTriangle, CheckCircle, Image as ImageIcon,
+  ExternalLink, Map, Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
+import { useBrasilAPI } from '@/hooks/useBrasilAPI';
 
 interface GoogleLeadDetailPanelProps {
   place: GooglePlaceWithDetail;
@@ -22,9 +24,32 @@ function normalizePhone(phone: string | null): string | null {
   return phone.replace(/\D/g, '').slice(-11);
 }
 
+// Tenta extrair CNPJ de texto/URL — heurística simples
+function extractCNPJFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const cnpjPattern = /\d{2}\.?\d{3}\.?\d{3}[/\\]?\d{4}-?\d{2}/;
+  const match = text.match(cnpjPattern);
+  if (match) return match[0].replace(/\D/g, '');
+  return null;
+}
+
+function extractCity(address: string): string | null {
+  const parts = address.split(',');
+  if (parts.length >= 2) return parts[parts.length - 2].trim().split('-')[0].trim();
+  return null;
+}
+
+function extractBairro(address: string): string | null {
+  const parts = address.split(',');
+  if (parts.length >= 3) return parts[parts.length - 3].trim();
+  return null;
+}
+
 export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetailPanelProps) {
   const { profile } = useAuth();
+  const { searchCNPJ } = useBrasilAPI();
   const [importing, setImporting] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   const [alreadyImported, setAlreadyImported] = useState(false);
   const [photoBlob, setPhotoBlob] = useState<string | null>(null);
   const [photoLoading, setPhotoLoading] = useState(false);
@@ -58,17 +83,16 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
         const blob = await res.blob();
         setPhotoBlob(URL.createObjectURL(blob));
       })
-      .catch(() => {
-        // Silently skip if photo unavailable
-      })
+      .catch(() => { /* Silently skip */ })
       .finally(() => setPhotoLoading(false));
   }, [detail?.photos?.[0]?.photo_reference]);
 
   const handleImport = async () => {
     if (!profile) return;
     setImporting(true);
+
     try {
-      // Deduplication: check place_id first
+      // ── Deduplication ─────────────────────────────────────────────────────
       const { data: byPlaceId } = await supabase
         .from('leads')
         .select('id')
@@ -81,7 +105,6 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
         return;
       }
 
-      // Check by phone if available
       const phoneNorm = normalizePhone(detail?.formatted_phone_number || null);
       if (phoneNorm) {
         const { data: byPhone } = await supabase
@@ -96,26 +119,76 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
         }
       }
 
-      const { error } = await supabase.from('leads').insert({
-        razao_social: place.name,
-        nome_fantasia: place.name,
-        telefone: phoneNorm,
-        website: detail?.website || null,
-        cidade: extractCity(place.formatted_address || place.vicinity || ''),
-        bairro: extractBairro(place.formatted_address || place.vicinity || ''),
-        rating: place.rating ? Number(place.rating) : null,
-        place_id: place.place_id,
-        foto_url: photoBlob || null,
-        fonte: 'google_maps',
-        created_by: profile.id,
-        assigned_to: profile.id,
-        status: 'novo',
-      });
+      const cidade = extractCity(place.formatted_address || place.vicinity || '');
+
+      // ── Insert base ───────────────────────────────────────────────────────
+      const { data: insertedLead, error } = await supabase
+        .from('leads')
+        .insert({
+          razao_social: place.name,
+          nome_fantasia: place.name,
+          telefone: phoneNorm,
+          website: detail?.website || null,
+          cidade,
+          bairro: extractBairro(place.formatted_address || place.vicinity || ''),
+          rating: place.rating ? Number(place.rating) : null,
+          place_id: place.place_id,
+          foto_url: photoBlob || null,
+          fonte: 'google_maps',
+          created_by: profile.id,
+          assigned_to: profile.id,
+          status: 'novo',
+        })
+        .select('id')
+        .single();
 
       if (error) throw error;
 
-      toast.success('Lead importado para o funil!');
+      toast.success('Lead salvo! Buscando dados na Receita Federal...');
       setAlreadyImported(true);
+
+      // ── Enriquecimento automático via BrasilAPI ───────────────────────────
+      // BrasilAPI só aceita CNPJ numérico. Tentamos extrair do website como heurística.
+      // Se não encontrado, o usuário pode enriquecer manualmente via aba Mineração.
+      const maybeCNPJ =
+        extractCNPJFromText(detail?.website) ||
+        extractCNPJFromText(place.formatted_address);
+
+      if (maybeCNPJ && insertedLead?.id) {
+        setEnriching(true);
+        try {
+          const brasilData = await searchCNPJ(maybeCNPJ);
+          if (brasilData && insertedLead?.id) {
+            const cnpjPhone = brasilData.ddd_telefone_1
+              ? brasilData.ddd_telefone_1.replace(/\D/g, '')
+              : phoneNorm;
+
+            await supabase
+              .from('leads')
+              .update({
+                cnpj: brasilData.cnpj,
+                razao_social: brasilData.razao_social || place.name,
+                nome_fantasia: brasilData.nome_fantasia || place.name,
+                email: brasilData.email || null,
+                telefone: cnpjPhone || phoneNorm,
+                cnae_codigo: String(brasilData.cnae_fiscal),
+                cnae_descricao: brasilData.cnae_fiscal_descricao,
+                cidade: brasilData.municipio || cidade,
+                estado: brasilData.uf || null,
+                bairro: brasilData.bairro || null,
+              })
+              .eq('id', insertedLead.id);
+
+            toast.success(`✅ Enriquecido com CNPJ ${brasilData.cnpj}!`);
+          }
+        } catch {
+          // Falha silenciosa — lead já está salvo sem enriquecimento
+        } finally {
+          setEnriching(false);
+        }
+      } else if (insertedLead?.id) {
+        toast.info('CNPJ não detectado. Use a aba Mineração para enriquecer pelo CNPJ.');
+      }
     } catch (err) {
       console.error('Import error:', err);
       toast.error('Erro ao importar lead');
@@ -262,9 +335,13 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
 
       {/* Actions */}
       <div className="space-y-2 pb-2">
-        {/* Primary action: Import */}
+        {/* Primary: Import */}
         {!alreadyImported ? (
-          <Button className="w-full" onClick={handleImport} disabled={importing || loadingDetail}>
+          <Button
+            className="w-full"
+            onClick={handleImport}
+            disabled={importing || loadingDetail}
+          >
             {importing ? (
               <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Importando...</>
             ) : (
@@ -273,10 +350,17 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
           </Button>
         ) : (
           <div className="space-y-2">
-            <div className="flex items-center justify-center gap-2 rounded-md bg-muted/60 py-2">
-              <CheckCircle className="h-3.5 w-3.5 text-accent" />
-              <span className="text-xs text-muted-foreground">Já importado para o CRM</span>
-            </div>
+            {enriching ? (
+              <div className="flex items-center justify-center gap-2 rounded-md bg-primary/5 border border-primary/20 py-2">
+                <Sparkles className="h-3.5 w-3.5 text-primary animate-pulse" />
+                <span className="text-xs text-primary">Enriquecendo dados com a Receita Federal...</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2 rounded-md bg-muted/60 py-2">
+                <CheckCircle className="h-3.5 w-3.5 text-accent" />
+                <span className="text-xs text-muted-foreground">Importado para o CRM</span>
+              </div>
+            )}
             {hasPhone && (
               <Button variant="outline" size="sm" className="w-full" onClick={handleWhatsApp}>
                 <MessageCircle className="h-4 w-4 mr-2" />
@@ -292,15 +376,13 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
 
         <Separator />
 
-        {/* Quick-access buttons always visible */}
+        {/* Quick-access buttons */}
         <div className="grid grid-cols-2 gap-2">
-          {/* Ver no Google Maps */}
           <Button
             variant="outline"
             size="sm"
             className="text-xs gap-1.5"
             onClick={() => {
-              // Prefer the Maps URL from detail, fallback to search URL
               const mapsUrl = detail?.url
                 || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}&query_place_id=${place.place_id}`;
               window.open(mapsUrl, '_blank');
@@ -310,7 +392,6 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
             Ver no Maps
           </Button>
 
-          {/* Acessar Website */}
           <Button
             variant="outline"
             size="sm"
@@ -346,17 +427,4 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
       </div>
     </div>
   );
-}
-
-// Helper to extract city from formatted address
-function extractCity(address: string): string | null {
-  const parts = address.split(',');
-  if (parts.length >= 2) return parts[parts.length - 2].trim().split('-')[0].trim();
-  return null;
-}
-
-function extractBairro(address: string): string | null {
-  const parts = address.split(',');
-  if (parts.length >= 3) return parts[parts.length - 3].trim();
-  return null;
 }
