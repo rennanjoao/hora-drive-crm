@@ -7,7 +7,7 @@ import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Search, Loader2, Filter, MapPin, Map, AlertTriangle, Download
+  Search, Loader2, Filter, MapPin, Map, AlertTriangle, Download, ChevronDown
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useGoogleMaps, GooglePlaceBasic } from '@/hooks/useGoogleMaps';
@@ -25,7 +25,7 @@ const NICHOS_SUGERIDOS = [
 
 export function GoogleMapsSearch() {
   const { profile } = useAuth();
-  const { searchResults, loadingSearch, loadingDetail, searchError, selectedPlace, searchPlaces, selectPlace, reset } = useGoogleMaps();
+  const { searchResults, loadingSearch, loadingMore, loadingDetail, searchError, selectedPlace, nextPageToken, searchPlaces, selectPlace, loadMore, reset } = useGoogleMaps();
 
   const [nicho, setNicho] = useState('');
   const [cidade, setCidade] = useState('');
@@ -239,6 +239,24 @@ export function GoogleMapsSearch() {
                   onClick={() => selectPlace(place)}
                 />
               ))}
+              {/* Load more button */}
+              {nextPageToken && (
+                <div className="pt-2 pb-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-xs gap-1.5"
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? (
+                      <><Loader2 className="h-3.5 w-3.5 animate-spin" />Carregando mais...</>
+                    ) : (
+                      <><ChevronDown className="h-3.5 w-3.5" />Carregar mais resultados</>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           </Card>
 

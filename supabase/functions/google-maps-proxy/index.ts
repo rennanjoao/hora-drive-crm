@@ -20,27 +20,34 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { type, query, placeId, location } = body;
+    const { type, query, placeId, location, pageToken } = body;
 
     let url: string;
 
     if (type === 'textSearch') {
       // Returns only basic info — save place_id + name + address to save credit
       const params = new URLSearchParams({
-        query,
         key: apiKey,
         language: 'pt-BR',
       });
-      if (location) {
-        params.append('location', location);
-        params.append('radius', '50000');
+      if (pageToken) {
+        // next_page_token mode: reuse the same query param name
+        params.append('pagetoken', pageToken);
+        // query is required even with pagetoken
+        params.append('query', query || '');
+      } else {
+        params.append('query', query);
+        if (location) {
+          params.append('location', location);
+          params.append('radius', '50000');
+        }
       }
       url = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params}`;
     } else if (type === 'getDetails') {
       // Lazy load: only called when user clicks a lead row
       const params = new URLSearchParams({
         place_id: placeId,
-        fields: 'formatted_phone_number,website,photos,rating,geometry,opening_hours,formatted_address,business_status',
+        fields: 'formatted_phone_number,website,photos,rating,geometry,opening_hours,formatted_address,business_status,url',
         key: apiKey,
         language: 'pt-BR',
       });

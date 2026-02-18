@@ -21,6 +21,7 @@ export interface GooglePlaceDetail {
   opening_hours?: { open_now?: boolean; weekday_text?: string[] };
   formatted_address?: string;
   business_status?: string;
+  url?: string; // Google Maps URL
 }
 
 export interface GooglePlaceWithDetail extends GooglePlaceBasic {
@@ -30,9 +31,12 @@ export interface GooglePlaceWithDetail extends GooglePlaceBasic {
 export function useGoogleMaps() {
   const [searchResults, setSearchResults] = useState<GooglePlaceBasic[]>([]);
   const [loadingSearch, setLoadingSearch] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedPlace, setSelectedPlace] = useState<GooglePlaceWithDetail | null>(null);
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [lastQuery, setLastQuery] = useState<string>('');
 
   // textSearch: cheap — only returns place_id + name + address
   const searchPlaces = useCallback(async (nicho: string, cidade: string, bairro?: string) => {
@@ -41,8 +45,10 @@ export function useGoogleMaps() {
     setSearchError(null);
     setSelectedPlace(null);
     setSearchResults([]);
+    setNextPageToken(null);
 
     const query = [nicho, bairro, cidade].filter(Boolean).join(' ');
+    setLastQuery(query);
 
     try {
       const { data, error } = await supabase.functions.invoke('google-maps-proxy', {
@@ -66,6 +72,7 @@ export function useGoogleMaps() {
       }));
 
       setSearchResults(results);
+      setNextPageToken(data.next_page_token || null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro na busca';
       setSearchError(msg);
@@ -73,6 +80,46 @@ export function useGoogleMaps() {
       setLoadingSearch(false);
     }
   }, []);
+
+  // Load next page of results using next_page_token
+  const loadMore = useCallback(async () => {
+    if (!nextPageToken || loadingMore) return;
+    setLoadingMore(true);
+
+    try {
+      // Google requires a short delay before next_page_token is valid
+      await new Promise(res => setTimeout(res, 2000));
+
+      const { data, error } = await supabase.functions.invoke('google-maps-proxy', {
+        body: { type: 'textSearch', query: lastQuery, pageToken: nextPageToken },
+      });
+
+      if (error) throw new Error(error.message);
+
+      const results: GooglePlaceBasic[] = (data.results || []).map((r: any) => ({
+        place_id: r.place_id,
+        name: r.name,
+        vicinity: r.vicinity,
+        formatted_address: r.formatted_address,
+        rating: r.rating,
+        user_ratings_total: r.user_ratings_total,
+        business_status: r.business_status,
+        types: r.types,
+      }));
+
+      // Deduplicate
+      setSearchResults(prev => {
+        const existingIds = new Set(prev.map(p => p.place_id));
+        const newResults = results.filter(r => !existingIds.has(r.place_id));
+        return [...prev, ...newResults];
+      });
+      setNextPageToken(data.next_page_token || null);
+    } catch (err) {
+      console.error('loadMore error:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextPageToken, loadingMore, lastQuery]);
 
   // getDetails: called ONLY when user clicks a row (lazy load to save credit)
   const fetchDetails = useCallback(async (place: GooglePlaceBasic): Promise<GooglePlaceWithDetail> => {
@@ -87,7 +134,6 @@ export function useGoogleMaps() {
 
       const detail: GooglePlaceDetail = data.result || {};
 
-      // Photo URL is fetched lazily in the panel component via edge function
       const enriched: GooglePlaceWithDetail = { ...place, detail };
       setSelectedPlace(enriched);
       return enriched;
@@ -116,16 +162,21 @@ export function useGoogleMaps() {
     setSearchResults([]);
     setSelectedPlace(null);
     setSearchError(null);
+    setNextPageToken(null);
+    setLastQuery('');
   }, []);
 
   return {
     searchResults,
     loadingSearch,
+    loadingMore,
     loadingDetail,
     searchError,
     selectedPlace,
+    nextPageToken,
     searchPlaces,
     selectPlace,
+    loadMore,
     reset,
   };
 }

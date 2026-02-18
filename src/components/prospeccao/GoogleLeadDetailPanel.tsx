@@ -6,7 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Loader2, Download, Mail, MessageCircle, MapPin, Phone, Globe,
-  Star, Building2, AlertTriangle, CheckCircle, Image as ImageIcon, ExternalLink
+  Star, Building2, AlertTriangle, CheckCircle, Image as ImageIcon, ExternalLink, Map
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -262,18 +262,20 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
 
       {/* Actions */}
       <div className="space-y-2 pb-2">
+        {/* Primary action: Import */}
         {!alreadyImported ? (
           <Button className="w-full" onClick={handleImport} disabled={importing || loadingDetail}>
             {importing ? (
               <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Importando...</>
             ) : (
-              <><Download className="h-4 w-4 mr-2" />Importar para o Funil</>
+              <><Download className="h-4 w-4 mr-2" />Importar para o CRM</>
             )}
           </Button>
         ) : (
           <div className="space-y-2">
             <div className="flex items-center justify-center gap-2 rounded-md bg-muted/60 py-2">
-              <span className="text-xs text-muted-foreground">✓ Já importado para o CRM</span>
+              <CheckCircle className="h-3.5 w-3.5 text-accent" />
+              <span className="text-xs text-muted-foreground">Já importado para o CRM</span>
             </div>
             {hasPhone && (
               <Button variant="outline" size="sm" className="w-full" onClick={handleWhatsApp}>
@@ -287,6 +289,41 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
             </Button>
           </div>
         )}
+
+        <Separator />
+
+        {/* Quick-access buttons always visible */}
+        <div className="grid grid-cols-2 gap-2">
+          {/* Ver no Google Maps */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs gap-1.5"
+            onClick={() => {
+              // Prefer the Maps URL from detail, fallback to search URL
+              const mapsUrl = detail?.url
+                || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}&query_place_id=${place.place_id}`;
+              window.open(mapsUrl, '_blank');
+            }}
+          >
+            <Map className="h-3.5 w-3.5" />
+            Ver no Maps
+          </Button>
+
+          {/* Acessar Website */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs gap-1.5"
+            disabled={!detail?.website}
+            onClick={() => {
+              if (detail?.website) window.open(detail.website, '_blank');
+            }}
+          >
+            <Globe className="h-3.5 w-3.5" />
+            {detail?.website ? 'Acessar Site' : 'Sem Website'}
+          </Button>
+        </div>
 
         {/* Street View */}
         {detail?.geometry && (
