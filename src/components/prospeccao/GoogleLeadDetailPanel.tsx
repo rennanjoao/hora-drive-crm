@@ -39,16 +39,29 @@ export function GoogleLeadDetailPanel({ place, loadingDetail }: GoogleLeadDetail
     if (!detail?.photos?.[0]?.photo_reference) return;
     setPhotoBlob(null);
     setPhotoLoading(true);
-    supabase.functions.invoke('google-maps-proxy', {
-      body: { type: 'photo', photoReference: detail.photos[0].photo_reference },
-    }).then(({ data, error }) => {
-      if (!error && data instanceof ArrayBuffer) {
-        const blob = new Blob([data], { type: 'image/jpeg' });
+
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    const url = `${supabaseUrl}/functions/v1/google-maps-proxy`;
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': anonKey,
+        'Authorization': `Bearer ${anonKey}`,
+      },
+      body: JSON.stringify({ type: 'photo', photoReference: detail.photos[0].photo_reference }),
+    })
+      .then(async res => {
+        if (!res.ok) throw new Error('Photo fetch failed');
+        const blob = await res.blob();
         setPhotoBlob(URL.createObjectURL(blob));
-      }
-    }).catch(() => {
-      // Silently skip
-    }).finally(() => setPhotoLoading(false));
+      })
+      .catch(() => {
+        // Silently skip if photo unavailable
+      })
+      .finally(() => setPhotoLoading(false));
   }, [detail?.photos?.[0]?.photo_reference]);
 
   const handleImport = async () => {

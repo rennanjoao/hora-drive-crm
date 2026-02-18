@@ -9,6 +9,7 @@ import {
   Target,
   ChevronRight,
   Video,
+  Film,
   Mail
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
@@ -43,6 +44,7 @@ const navItems: NavItem[] = [
   { title: 'Prospecção', url: '/prospeccao', icon: Search, roles: ['admin', 'sdr'] },
   { title: 'Reuniões', url: '/reunioes', icon: Video, roles: ['admin', 'sdr', 'gerente'] },
   { title: 'Automação', url: '/automacao', icon: Mail, roles: ['admin', 'sdr'] },
+  { title: 'Vídeos', url: '/videos', icon: Film, roles: ['admin', 'sdr', 'gerente'] },
   { title: 'Calendário', url: '/calendario', icon: Calendar, roles: ['admin', 'sdr', 'gerente'] },
   { title: 'Administração', url: '/admin', icon: UserCog, roles: ['admin'] },
 ];
