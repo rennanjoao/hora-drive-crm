@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      api_settings: {
+        Row: {
+          email_remetente_padrao: string | null
+          google_maps_key: string | null
+          id: string
+          resend_api_key: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          email_remetente_padrao?: string | null
+          google_maps_key?: string | null
+          id?: string
+          resend_api_key?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          email_remetente_padrao?: string | null
+          google_maps_key?: string | null
+          id?: string
+          resend_api_key?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       api_usage_logs: {
         Row: {
           cost_estimated: number | null
@@ -312,17 +339,21 @@ export type Database = {
           cnpj: string | null
           created_at: string
           created_by: string | null
+          data_ultimo_envio: string | null
           email: string | null
+          emails_enviados_count: number | null
           estado: string | null
           fonte: string | null
           foto_url: string | null
           id: string
           nome_fantasia: string | null
+          origem_lead: string | null
           place_id: string | null
           rating: number | null
           razao_social: string
           setor: string | null
           status: Database["public"]["Enums"]["lead_status"] | null
+          status_automacao: string | null
           telefone: string | null
           updated_at: string
           website: string | null
@@ -337,17 +368,21 @@ export type Database = {
           cnpj?: string | null
           created_at?: string
           created_by?: string | null
+          data_ultimo_envio?: string | null
           email?: string | null
+          emails_enviados_count?: number | null
           estado?: string | null
           fonte?: string | null
           foto_url?: string | null
           id?: string
           nome_fantasia?: string | null
+          origem_lead?: string | null
           place_id?: string | null
           rating?: number | null
           razao_social: string
           setor?: string | null
           status?: Database["public"]["Enums"]["lead_status"] | null
+          status_automacao?: string | null
           telefone?: string | null
           updated_at?: string
           website?: string | null
@@ -362,17 +397,21 @@ export type Database = {
           cnpj?: string | null
           created_at?: string
           created_by?: string | null
+          data_ultimo_envio?: string | null
           email?: string | null
+          emails_enviados_count?: number | null
           estado?: string | null
           fonte?: string | null
           foto_url?: string | null
           id?: string
           nome_fantasia?: string | null
+          origem_lead?: string | null
           place_id?: string | null
           rating?: number | null
           razao_social?: string
           setor?: string | null
           status?: Database["public"]["Enums"]["lead_status"] | null
+          status_automacao?: string | null
           telefone?: string | null
           updated_at?: string
           website?: string | null

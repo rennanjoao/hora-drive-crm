@@ -14,9 +14,10 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { toast } from 'sonner';
-import { Loader2, Plus, Mail, Send, Eye, MessageSquare, ArrowRight, Trash2, Play, Pause, BarChart3 } from 'lucide-react';
+import { Loader2, Plus, Mail, Send, Eye, MessageSquare, ArrowRight, Trash2, Play, Pause, BarChart3, Settings, User, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+
 
 interface Campaign {
   id: string;
@@ -71,6 +72,11 @@ export default function Automacao() {
   const [sends, setSends] = useState<EmailSend[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [addStepOpen, setAddStepOpen] = useState(false);
+
+  // Sender settings
+  const [selectedSender, setSelectedSender] = useState<'felipe' | 'mabile' | 'sistema'>('sistema');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
 
   const [newCampaign, setNewCampaign] = useState({ name: '', description: '' });
   const [newStep, setNewStep] = useState({
@@ -245,6 +251,10 @@ export default function Automacao() {
           <TabsList>
             <TabsTrigger value="campaigns">Campanhas</TabsTrigger>
             <TabsTrigger value="metrics">Métricas</TabsTrigger>
+            <TabsTrigger value="configuracoes" className="gap-1.5">
+              <Settings className="h-3.5 w-3.5" />
+              Configurações
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="campaigns" className="space-y-4">
@@ -482,6 +492,91 @@ export default function Automacao() {
                     </TableBody>
                   </Table>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Configurações de Remetente */}
+          <TabsContent value="configuracoes" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <User className="h-5 w-5" />
+                  Remetente dos E-mails
+                </CardTitle>
+                <CardDescription>
+                  Escolha qual nome aparecerá como remetente nas campanhas de e-mail enviadas
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { value: 'felipe', label: 'Felipe', desc: 'Felipe — Na Hora Transporte' },
+                    { value: 'mabile', label: 'Mabile', desc: 'Mabile — Na Hora Transporte' },
+                    { value: 'sistema', label: 'Sistema', desc: 'Na Hora Transporte (padrão)' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => { setSelectedSender(opt.value as any); setSettingsSaved(false); }}
+                      className={`rounded-lg border-2 p-4 text-left transition-all ${
+                        selectedSender === opt.value
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                          selectedSender === opt.value ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                        }`}>
+                          {opt.label[0]}
+                        </div>
+                        <span className="font-medium text-sm">{opt.label}</span>
+                        {selectedSender === opt.value && (
+                          <CheckCircle className="h-4 w-4 text-primary ml-auto" />
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">{opt.desc}</p>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="rounded-lg bg-muted/50 p-4 text-sm space-y-1">
+                  <p className="font-medium">Como funciona</p>
+                  <p className="text-muted-foreground text-xs">
+                    O remetente selecionado será usado em todas as campanhas enviadas por você.
+                    O endereço de e-mail real é definido na sua conta Resend (domínio verificado).
+                    Você pode sobrescrever isso por campanha individualmente.
+                  </p>
+                </div>
+
+                <Button
+                  onClick={async () => {
+                    if (!profile) return;
+                    setSavingSettings(true);
+                    try {
+                      await supabase.from('api_settings').upsert({
+                        user_id: profile.user_id,
+                        email_remetente_padrao: selectedSender,
+                        updated_at: new Date().toISOString(),
+                      }, { onConflict: 'user_id' });
+                      setSettingsSaved(true);
+                      toast.success(`Remetente "${selectedSender}" salvo com sucesso!`);
+                    } catch (err) {
+                      toast.error('Erro ao salvar configuração');
+                    } finally {
+                      setSavingSettings(false);
+                    }
+                  }}
+                  disabled={savingSettings}
+                >
+                  {savingSettings ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Salvando...</>
+                  ) : settingsSaved ? (
+                    <><CheckCircle className="h-4 w-4 mr-2" />Salvo!</>
+                  ) : (
+                    'Salvar Configuração'
+                  )}
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
