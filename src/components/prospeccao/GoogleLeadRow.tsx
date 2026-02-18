@@ -2,7 +2,7 @@ import { GooglePlaceBasic } from '@/hooks/useGoogleMaps';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
-import { MapPin, Star, ExternalLink } from 'lucide-react';
+import { MapPin, Star, MessageSquare } from 'lucide-react';
 
 interface GoogleLeadRowProps {
   place: GooglePlaceBasic;
@@ -28,6 +28,8 @@ function businessTypeLabel(types?: string[]): string | null {
 export function GoogleLeadRow({ place, selected, isHighlighted, onToggle, onClick }: GoogleLeadRowProps) {
   const typeLabel = businessTypeLabel(place.types);
   const isActive = place.business_status === 'OPERATIONAL';
+  const reviewCount = place.user_ratings_total;
+  const isHighReview = reviewCount !== undefined && reviewCount >= 500;
 
   return (
     <div
@@ -66,6 +68,22 @@ export function GoogleLeadRow({ place, selected, isHighlighted, onToggle, onClic
               {(place.vicinity || place.formatted_address)?.split(',')[0]}
             </span>
           )}
+
+          {/* Review count — highlighted if ≥ 500 */}
+          {reviewCount !== undefined && (
+            <span
+              className={cn(
+                'flex items-center gap-0.5 text-xs',
+                isHighReview
+                  ? 'text-accent font-semibold'
+                  : 'text-muted-foreground'
+              )}
+            >
+              <MessageSquare className="h-3 w-3 shrink-0" />
+              {reviewCount.toLocaleString('pt-BR')}
+            </span>
+          )}
+
           {typeLabel && (
             <Badge variant="secondary" className="text-xs py-0">{typeLabel}</Badge>
           )}

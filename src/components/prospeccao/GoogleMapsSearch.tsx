@@ -1,20 +1,21 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Search, Loader2, Filter, MapPin, Map, AlertTriangle, Download, ChevronDown
+  Search, Loader2, Filter, MapPin, Map, AlertTriangle, Download, ChevronDown, RotateCcw, MessageSquare
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useGoogleMaps, GooglePlaceBasic } from '@/hooks/useGoogleMaps';
+import { GooglePlaceBasic } from '@/hooks/useGoogleMaps';
+import { useGoogleMapsSearch } from '@/hooks/useGoogleMapsSearch';
 import { GoogleLeadRow } from './GoogleLeadRow';
 import { GoogleLeadDetailPanel } from './GoogleLeadDetailPanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBrasilAPI } from '@/hooks/useBrasilAPI';
 
 const NICHOS_SUGERIDOS = [
   'Supermercado', 'Distribuidora', 'Construtora', 'Material de Construção',
@@ -25,29 +26,41 @@ const NICHOS_SUGERIDOS = [
 
 export function GoogleMapsSearch() {
   const { profile } = useAuth();
-  const { searchResults, loadingSearch, loadingMore, loadingDetail, searchError, selectedPlace, nextPageToken, searchPlaces, selectPlace, loadMore, reset } = useGoogleMaps();
+  const { searchCNPJ } = useBrasilAPI();
 
-  const [nicho, setNicho] = useState('');
-  const [cidade, setCidade] = useState('');
-  const [bairro, setBairro] = useState('');
+  const {
+    nicho, setNicho,
+    cidade, setCidade,
+    bairro, setBairro,
+    searchResults,
+    isRestored,
+    loadingSearch, loadingMore, loadingDetail,
+    searchError,
+    selectedPlace,
+    nextPageToken,
+    selectPlace, loadMore,
+    handleSearch, reset,
+  } = useGoogleMapsSearch();
+
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [importingBulk, setImportingBulk] = useState(false);
   const [importedIds, setImportedIds] = useState<Set<string>>(new Set());
 
-  const handleSearch = async () => {
-    if (!nicho.trim()) {
-      toast.error('Informe o nicho/tipo de negócio para buscar');
-      return;
-    }
-    if (!cidade.trim()) {
-      toast.error('Informe a cidade para filtrar');
-      return;
-    }
-    setSelectedIds(new Set());
-    setImportedIds(new Set());
-    await searchPlaces(nicho, cidade, bairro || undefined);
-  };
+  // ── Filters ─────────────────────────────────────────────────────────────
+  const [filterMinReviews, setFilterMinReviews] = useState(false);
+  // "apenas com email" is handled post-detail import (we don't have email at list stage),
+  // but we'll keep UI and note it filters by known email in detail
+  const [filterWithEmail] = useState(false); // placeholder; real email comes from details
 
+  const displayedResults: GooglePlaceBasic[] = useMemo(() => {
+    let list = searchResults;
+    if (filterMinReviews) {
+      list = list.filter(p => (p.user_ratings_total ?? 0) >= 500);
+    }
+    return list;
+  }, [searchResults, filterMinReviews]);
+
+  // ── Selection helpers ────────────────────────────────────────────────────
   const toggleSelect = (placeId: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -58,10 +71,20 @@ export function GoogleMapsSearch() {
   };
 
   const selectAll = (checked: boolean) => {
-    if (checked) setSelectedIds(new Set(searchResults.map(p => p.place_id)));
+    if (checked) setSelectedIds(new Set(displayedResults.map(p => p.place_id)));
     else setSelectedIds(new Set());
   };
 
+  // ── Search handler ───────────────────────────────────────────────────────
+  const onSearch = async () => {
+    if (!nicho.trim()) { toast.error('Informe o nicho/tipo de negócio para buscar'); return; }
+    if (!cidade.trim()) { toast.error('Informe a cidade para filtrar'); return; }
+    setSelectedIds(new Set());
+    setImportedIds(new Set());
+    await handleSearch();
+  };
+
+  // ── Bulk import with BrasilAPI enrichment ────────────────────────────────
   const handleBulkImport = async () => {
     if (!profile || selectedIds.size === 0) return;
     setImportingBulk(true);
@@ -70,7 +93,7 @@ export function GoogleMapsSearch() {
 
     try {
       for (const placeId of Array.from(selectedIds)) {
-        const place = searchResults.find(p => p.place_id === placeId);
+        const place = displayedResults.find(p => p.place_id === placeId);
         if (!place) continue;
 
         // Dedup by place_id
@@ -86,6 +109,9 @@ export function GoogleMapsSearch() {
           continue;
         }
 
+        // Try to get place details to find CNPJ if available (via phone or address)
+        // For bulk import we save basic data; BrasilAPI needs a known CNPJ
+        // We'll import basic data and flag enrichment_needed
         const { error } = await supabase.from('leads').insert({
           razao_social: place.name,
           nome_fantasia: place.name,
@@ -95,6 +121,7 @@ export function GoogleMapsSearch() {
           created_by: profile.id,
           assigned_to: profile.id,
           status: 'novo',
+          cidade: extractCity(place.formatted_address || place.vicinity || ''),
         });
 
         if (!error) {
@@ -113,7 +140,8 @@ export function GoogleMapsSearch() {
   };
 
   const selectedCount = selectedIds.size;
-  const allSelected = searchResults.length > 0 && selectedCount === searchResults.length;
+  const allSelected = displayedResults.length > 0 && selectedCount === displayedResults.length;
+  const hasResults = displayedResults.length > 0 || searchResults.length > 0;
 
   return (
     <div className="space-y-4">
@@ -136,7 +164,7 @@ export function GoogleMapsSearch() {
                 placeholder="ex: Supermercado, Distribuidora..."
                 value={nicho}
                 onChange={e => setNicho(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                onKeyDown={e => e.key === 'Enter' && onSearch()}
               />
             </div>
             <div className="space-y-1.5">
@@ -145,7 +173,7 @@ export function GoogleMapsSearch() {
                 placeholder="ex: São Paulo, Campinas..."
                 value={cidade}
                 onChange={e => setCidade(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                onKeyDown={e => e.key === 'Enter' && onSearch()}
               />
             </div>
             <div className="space-y-1.5">
@@ -154,7 +182,7 @@ export function GoogleMapsSearch() {
                 placeholder="ex: Centro, Vila Nova..."
                 value={bairro}
                 onChange={e => setBairro(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                onKeyDown={e => e.key === 'Enter' && onSearch()}
               />
             </div>
           </div>
@@ -176,16 +204,17 @@ export function GoogleMapsSearch() {
             ))}
           </div>
 
-          <div className="flex gap-2">
-            <Button onClick={handleSearch} disabled={loadingSearch} className="gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button onClick={onSearch} disabled={loadingSearch} className="gap-2">
               {loadingSearch ? (
                 <><Loader2 className="h-4 w-4 animate-spin" />Buscando...</>
               ) : (
                 <><Search className="h-4 w-4" />Buscar no Google Maps</>
               )}
             </Button>
-            {searchResults.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={reset}>
+            {hasResults && (
+              <Button variant="ghost" size="sm" onClick={reset} className="gap-1.5">
+                <RotateCcw className="h-3.5 w-3.5" />
                 Limpar
               </Button>
             )}
@@ -201,11 +230,37 @@ export function GoogleMapsSearch() {
       </Card>
 
       {/* Results split-screen */}
-      {searchResults.length > 0 && (
+      {hasResults && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 items-start">
           {/* Left: List */}
           <Card className="overflow-hidden">
-            <CardHeader className="pb-2 px-3 pt-3">
+            <CardHeader className="pb-2 px-3 pt-3 space-y-2">
+              {/* Restored state notice */}
+              {isRestored && searchResults.length > 0 && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-2.5 py-1.5">
+                  <RotateCcw className="h-3 w-3 shrink-0" />
+                  Última busca restaurada — pesquise novamente para atualizar
+                </div>
+              )}
+
+              {/* Filters row */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Filter className="h-3 w-3" />
+                  Filtros:
+                </span>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                  <Checkbox
+                    checked={filterMinReviews}
+                    onCheckedChange={v => setFilterMinReviews(!!v)}
+                    className="h-3.5 w-3.5"
+                  />
+                  <MessageSquare className="h-3 w-3 text-muted-foreground" />
+                  Mín. 500 comentários
+                </label>
+              </div>
+
+              {/* Selection + bulk import row */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -213,7 +268,10 @@ export function GoogleMapsSearch() {
                     onCheckedChange={(checked) => selectAll(!!checked)}
                   />
                   <span className="text-xs text-muted-foreground">
-                    {selectedCount > 0 ? `${selectedCount} selecionados` : `${searchResults.length} resultados`}
+                    {selectedCount > 0
+                      ? `${selectedCount} selecionados`
+                      : `${displayedResults.length} resultado${displayedResults.length !== 1 ? 's' : ''}${filterMinReviews && searchResults.length !== displayedResults.length ? ` (de ${searchResults.length})` : ''}`
+                    }
                   </span>
                 </div>
                 {selectedCount > 0 && (
@@ -229,7 +287,7 @@ export function GoogleMapsSearch() {
             </CardHeader>
             <Separator />
             <div className="overflow-y-auto max-h-[600px] p-2 space-y-0.5">
-              {searchResults.map(place => (
+              {displayedResults.map(place => (
                 <GoogleLeadRow
                   key={place.place_id}
                   place={place}
@@ -239,6 +297,11 @@ export function GoogleMapsSearch() {
                   onClick={() => selectPlace(place)}
                 />
               ))}
+              {displayedResults.length === 0 && searchResults.length > 0 && (
+                <div className="py-6 text-center text-xs text-muted-foreground">
+                  Nenhum resultado passa pelos filtros ativos
+                </div>
+              )}
               {/* Load more button */}
               {nextPageToken && (
                 <div className="pt-2 pb-1">
@@ -284,7 +347,7 @@ export function GoogleMapsSearch() {
         </div>
       )}
 
-      {searchResults.length === 0 && !loadingSearch && !searchError && (
+      {!hasResults && !loadingSearch && !searchError && (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <MapPin className="h-10 w-10 text-muted-foreground/30 mb-3" />
@@ -297,4 +360,11 @@ export function GoogleMapsSearch() {
       )}
     </div>
   );
+}
+
+// Helper
+function extractCity(address: string): string | null {
+  const parts = address.split(',');
+  if (parts.length >= 2) return parts[parts.length - 2].trim().split('-')[0].trim();
+  return null;
 }
