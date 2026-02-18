@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, Video, Trash2, ExternalLink, Plus, Zap, X, Building2, Phone, Link2, Copy, Check, LogIn } from 'lucide-react';
+import { Loader2, Video, Trash2, ExternalLink, Plus, Zap, X, Building2, Phone, Link2, Copy, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ScheduleMeetingModal } from '@/components/ScheduleMeetingModal';
@@ -409,11 +409,9 @@ export default function Reunioes() {
               <TableBody>
                 {filteredMeetings.map((meeting) => {
                   const lead = leadMap[meeting.lead_id];
-                  const isActive = activeRoom?.meeting.id === meeting.id;
                   return (
-                    <TableRow key={meeting.id} className={isActive ? 'bg-primary/5' : ''}>
+                    <TableRow key={meeting.id}>
                       <TableCell className="font-medium">
-                        {isActive && <span className="inline-block w-2 h-2 bg-accent rounded-full mr-2 animate-pulse" />}
                         {meeting.title}
                       </TableCell>
                       <TableCell className="text-sm">
@@ -432,22 +430,22 @@ export default function Reunioes() {
                       <TableCell>{getStatusBadge(meeting.status, meeting.meeting_date)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Enter room in new tab */}
                           <Button
                             size="sm"
-                            variant={isActive ? 'default' : 'outline'}
-                            onClick={() => isActive ? closeRoom() : enterMeeting(meeting)}
+                            variant="default"
+                            onClick={() => window.open(`${meeting.jitsi_link}#config.startWithVideoMuted=false&config.prejoinPageEnabled=false`, '_blank')}
                             className="text-xs gap-1"
                           >
-                            {isActive ? (
-                              <><X className="h-3 w-3" />Encerrar</>
-                            ) : (
-                              <><LogIn className="h-3 w-3" />Entrar</>
-                            )}
+                            <ExternalLink className="h-3 w-3" />
+                            Entrar na Sala
                           </Button>
+                          {/* Copy link */}
                           <Button
                             size="sm"
                             variant="ghost"
                             className="text-xs gap-1"
+                            title="Copiar link"
                             onClick={() => {
                               navigator.clipboard.writeText(meeting.jitsi_link);
                               toast.success('Link copiado!');
@@ -455,27 +453,28 @@ export default function Reunioes() {
                           >
                             <Link2 className="h-3 w-3" />
                           </Button>
+                          {/* Delete */}
                           {(isAdmin || isSDR) && (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
-                                <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive">
+                                <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" title="Cancelar reunião">
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                               </AlertDialogTrigger>
                               <AlertDialogContent>
                                 <AlertDialogHeader>
-                                  <AlertDialogTitle>Deletar Reunião?</AlertDialogTitle>
+                                  <AlertDialogTitle>Cancelar Reunião?</AlertDialogTitle>
                                   <AlertDialogDescription>
                                     Essa ação não pode ser desfeita. A reunião "{meeting.title}" será removida permanentemente.
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogCancel>Manter</AlertDialogCancel>
                                   <AlertDialogAction
                                     onClick={() => deleteMeeting(meeting.id)}
                                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                   >
-                                    {deletingId === meeting.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Deletar'}
+                                    {deletingId === meeting.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Cancelar Reunião'}
                                   </AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>
