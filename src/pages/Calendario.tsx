@@ -38,7 +38,7 @@ interface Meeting {
   jitsi_link: string;
   contact_name: string | null;
   sdr_id: string;
-  lead_id: string;
+  lead_id: string | null;   // nullable — reuniões instantâneas podem não ter lead
 }
 
 interface Profile {
@@ -128,8 +128,11 @@ export default function Calendario() {
         query = query.eq('sdr_id', profile.id);
       }
       const { data, error } = await query.order('meeting_date', { ascending: true });
-      if (error) throw error;
-      setMeetings(data || []);
+      if (error) {
+        console.error('Error fetching meetings:', error);
+        return;
+      }
+      setMeetings((data || []) as Meeting[]);
     } catch (error) {
       console.error('Error fetching meetings:', error);
     }
