@@ -16,12 +16,15 @@ export function useRoleGuard(allowedRoles: AppRole[], redirectTo: string = '/das
       return;
     }
 
+    // Only redirect if role is known AND not allowed
+    // If role is still null (being provisioned), wait
     if (role && !allowedRoles.includes(role)) {
       navigate(redirectTo);
     }
   }, [role, loading, user, allowedRoles, redirectTo, navigate]);
 
-  return { isAllowed: role ? allowedRoles.includes(role) : false, loading };
+  // Allow access while role is loading/provisioning (null)
+  return { isAllowed: !role || allowedRoles.includes(role), loading };
 }
 
 export function useAuthGuard() {
