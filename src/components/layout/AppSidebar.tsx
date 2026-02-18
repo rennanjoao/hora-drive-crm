@@ -53,9 +53,10 @@ export function AppSidebar() {
   const location = useLocation();
   const collapsed = state === 'collapsed';
 
-  const filteredItems = navItems.filter(item => 
-    role && item.roles.includes(role)
-  );
+  // Show all items while role is loading (null), filtered once role is known
+  const filteredItems = role
+    ? navItems.filter(item => item.roles.includes(role))
+    : navItems.filter(item => item.roles.includes('sdr')); // fallback during load
 
   const getInitials = (name: string | null) => {
     if (!name) return 'U';

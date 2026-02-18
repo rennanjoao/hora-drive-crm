@@ -39,25 +39,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchUserData = async (userId: string) => {
+  const fetchUserData = async (userId: string, userEmail?: string, userFullName?: string) => {
     try {
       // Fetch profile
-      const { data: profileData } = await supabase
+      let { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('user_id', userId)
         .maybeSingle();
+
+      // Auto-provision profile if it doesn't exist (e.g. after a remix)
+      if (!profileData) {
+        const email = userEmail || '';
+        const fullName = userFullName || email;
+        const { data: newProfile } = await supabase
+          .from('profiles')
+          .insert({ user_id: userId, email, full_name: fullName })
+          .select('*')
+          .single();
+        profileData = newProfile;
+      }
 
       if (profileData) {
         setProfile(profileData);
       }
 
       // Fetch role
-      const { data: roleData } = await supabase
+      let { data: roleData } = await supabase
         .from('user_roles')
         .select('role')
         .eq('user_id', userId)
         .maybeSingle();
+
+      // Auto-provision role if it doesn't exist
+      if (!roleData) {
+        // First user gets admin, rest get sdr
+        const { count } = await supabase
+          .from('user_roles')
+          .select('id', { count: 'exact', head: true });
+        const assignedRole: AppRole = (count === 0 || count === null) ? 'admin' : 'sdr';
+        const { data: newRole } = await supabase
+          .from('user_roles')
+          .insert({ user_id: userId, role: assignedRole })
+          .select('role')
+          .single();
+        roleData = newRole;
+      }
 
       if (roleData) {
         setRole(roleData.role as AppRole);
@@ -77,7 +104,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session?.user) {
           // Defer data fetch to avoid deadlock
           setTimeout(() => {
-            fetchUserData(session.user.id);
+            fetchUserData(
+              session.user.id,
+              session.user.email,
+              session.user.user_metadata?.full_name
+            );
           }, 0);
         } else {
           setProfile(null);
@@ -92,7 +123,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchUserData(session.user.id);
+        fetchUserData(
+          session.user.id,
+          session.user.email,
+          session.user.user_metadata?.full_name
+        );
       }
       setLoading(false);
     });
