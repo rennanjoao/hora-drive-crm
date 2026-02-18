@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { toast } from 'sonner';
-import { Loader2, Plus, Mail, Send, Eye, MessageSquare, ArrowRight, Trash2, Play, Pause, BarChart3, Settings, User, CheckCircle } from 'lucide-react';
+import { Loader2, Plus, Mail, Send, Eye, MessageSquare, ArrowRight, Trash2, Play, Pause, BarChart3, Settings, User, CheckCircle, Tag, Search } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -75,8 +75,14 @@ export default function Automacao() {
 
   // Sender settings
   const [selectedSender, setSelectedSender] = useState<'felipe' | 'mabile' | 'sistema'>('sistema');
+  const [customSenderEmail, setCustomSenderEmail] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+
+  // Lista de Disparo (automation tag)
+  const [automationTag, setAutomationTag] = useState('');
+  const [tagLeads, setTagLeads] = useState<Lead[]>([]);
+  const [loadingTagLeads, setLoadingTagLeads] = useState(false);
 
   const [newCampaign, setNewCampaign] = useState({ name: '', description: '' });
   const [newStep, setNewStep] = useState({
@@ -106,6 +112,28 @@ export default function Automacao() {
   const fetchLeads = async () => {
     const { data } = await supabase.from('leads').select('id, razao_social, nome_fantasia, email');
     setLeads(data || []);
+  };
+
+  const fetchTagLeads = async (tag: string) => {
+    if (!tag.trim()) { setTagLeads([]); return; }
+    setLoadingTagLeads(true);
+    const { data } = await supabase
+      .from('leads')
+      .select('id, razao_social, nome_fantasia, email')
+      .eq('status_automacao', tag.trim());
+    setTagLeads(data || []);
+    setLoadingTagLeads(false);
+  };
+
+  const assignTagToSelected = async (leadIds: string[], tag: string) => {
+    if (!leadIds.length || !tag.trim()) return;
+    const { error } = await supabase
+      .from('leads')
+      .update({ status_automacao: tag.trim() })
+      .in('id', leadIds);
+    if (error) { toast.error('Erro ao atribuir tag'); return; }
+    toast.success(`Tag "${tag}" atribuída a ${leadIds.length} lead(s)`);
+    fetchTagLeads(tag);
   };
 
   useEffect(() => {
@@ -498,6 +526,7 @@ export default function Automacao() {
 
           {/* Configurações de Remetente */}
           <TabsContent value="configuracoes" className="space-y-4">
+            {/* Sender card */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -505,7 +534,7 @@ export default function Automacao() {
                   Remetente dos E-mails
                 </CardTitle>
                 <CardDescription>
-                  Escolha qual nome aparecerá como remetente nas campanhas de e-mail enviadas
+                  Escolha o nome do remetente e preencha o e-mail de envio manualmente
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -540,12 +569,29 @@ export default function Automacao() {
                   ))}
                 </div>
 
+                {/* Custom sender email field */}
+                <div className="space-y-1.5">
+                  <Label className="text-sm flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    E-mail do Remetente
+                  </Label>
+                  <Input
+                    type="email"
+                    placeholder="ex: contato@suaempresa.com.br"
+                    value={customSenderEmail}
+                    onChange={e => { setCustomSenderEmail(e.target.value); setSettingsSaved(false); }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Este endereço será usado como remetente no disparo via Resend.
+                    Certifique-se de que ele está verificado na sua conta Resend.
+                  </p>
+                </div>
+
                 <div className="rounded-lg bg-muted/50 p-4 text-sm space-y-1">
                   <p className="font-medium">Como funciona</p>
                   <p className="text-muted-foreground text-xs">
-                    O remetente selecionado será usado em todas as campanhas enviadas por você.
-                    O endereço de e-mail real é definido na sua conta Resend (domínio verificado).
-                    Você pode sobrescrever isso por campanha individualmente.
+                    O nome e o e-mail do remetente configurados aqui serão usados em todas as campanhas.
+                    O e-mail deve corresponder a um domínio verificado no Resend para garantir entregabilidade.
                   </p>
                 </div>
 
@@ -556,11 +602,11 @@ export default function Automacao() {
                     try {
                       await supabase.from('api_settings').upsert({
                         user_id: profile.user_id,
-                        email_remetente_padrao: selectedSender,
+                        email_remetente_padrao: customSenderEmail || selectedSender,
                         updated_at: new Date().toISOString(),
                       }, { onConflict: 'user_id' });
                       setSettingsSaved(true);
-                      toast.success(`Remetente "${selectedSender}" salvo com sucesso!`);
+                      toast.success('Configurações de remetente salvas!');
                     } catch (err) {
                       toast.error('Erro ao salvar configuração');
                     } finally {
@@ -577,6 +623,70 @@ export default function Automacao() {
                     'Salvar Configuração'
                   )}
                 </Button>
+              </CardContent>
+            </Card>
+
+            {/* Lista de Disparo por Tag */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Tag className="h-5 w-5" />
+                  Lista de Disparo por Tag
+                </CardTitle>
+                <CardDescription>
+                  Agrupe leads com uma tag de automação para disparar campanhas segmentadas
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                  <div className="flex-1 space-y-1.5">
+                    <Label className="text-xs">Tag de Automação</Label>
+                    <Input
+                      placeholder="ex: prospectos-novembro, supermercados-sp..."
+                      value={automationTag}
+                      onChange={e => setAutomationTag(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && fetchTagLeads(automationTag)}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => fetchTagLeads(automationTag)}
+                      disabled={!automationTag.trim() || loadingTagLeads}
+                    >
+                      {loadingTagLeads ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search />}
+                    </Button>
+                  </div>
+                </div>
+
+                {tagLeads.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      {tagLeads.length} lead(s) com a tag <strong>"{automationTag}"</strong>
+                    </p>
+                    <div className="max-h-60 overflow-y-auto rounded-lg border divide-y">
+                      {tagLeads.map(lead => (
+                        <div key={lead.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                          <span className="font-medium">{lead.nome_fantasia || lead.razao_social}</span>
+                          {lead.email ? (
+                            <span className="text-xs text-muted-foreground">{lead.email}</span>
+                          ) : (
+                            <span className="text-xs text-destructive">Sem e-mail</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Para adicionar leads à lista de disparo, vá em Leads e edite o campo "Status Automação" com a tag desejada.
+                    </p>
+                  </div>
+                )}
+
+                {tagLeads.length === 0 && automationTag && !loadingTagLeads && (
+                  <p className="text-xs text-muted-foreground">
+                    Nenhum lead encontrado com a tag "{automationTag}". Atribua a tag em Leads → editar lead.
+                  </p>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
