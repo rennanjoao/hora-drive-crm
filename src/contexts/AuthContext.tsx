@@ -74,35 +74,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(profileData);
       }
 
-      // Fetch role
-      let { data: roleData, error: roleError } = await supabase
+      // Fetch role — order by priority: admin > gerente > sdr > motorista
+      const roleOrder: AppRole[] = ['admin', 'gerente', 'sdr', 'motorista'];
+      let { data: rolesData } = await supabase
         .from('user_roles')
         .select('role')
-        .eq('user_id', userId)
-        .maybeSingle();
+        .eq('user_id', userId);
+
+      let roleData: { role: AppRole } | null = null;
+      if (rolesData && rolesData.length > 0) {
+        // Pick highest-priority role
+        for (const r of roleOrder) {
+          const found = rolesData.find(rd => rd.role === r);
+          if (found) { roleData = found as { role: AppRole }; break; }
+        }
+        if (!roleData) roleData = rolesData[0] as { role: AppRole };
+      }
 
       // Auto-provision role if it doesn't exist
-      if (!roleData && !roleError) {
+      if (!roleData) {
         const { count } = await supabase
           .from('user_roles')
           .select('id', { count: 'exact', head: true });
         const assignedRole: AppRole = (count === 0 || count === null) ? 'admin' : 'sdr';
-        const { data: newRole, error: insertRoleError } = await supabase
+        const { data: newRole } = await supabase
           .from('user_roles')
           .upsert({ user_id: userId, role: assignedRole }, { onConflict: 'user_id,role' })
           .select('role')
           .single();
-        if (!insertRoleError) {
-          roleData = newRole;
-        } else {
-          // Role may have been created in parallel — fetch the existing one
-          const { data: retryRole } = await supabase
-            .from('user_roles')
-            .select('role')
-            .eq('user_id', userId)
-            .maybeSingle();
-          roleData = retryRole;
-        }
+        if (newRole) roleData = newRole as { role: AppRole };
       }
 
       if (roleData) {
