@@ -27,10 +27,12 @@ interface MeetingRow {
   jitsi_link: string;
   contact_name: string | null;
   sdr_id: string;
-  lead_id: string;
+  lead_id: string | null;   // nullable — reuniões sem lead vinculado
   meeting_type: string;
   status: string;
   created_at: string;
+  transcription?: string | null;
+  recording_url?: string | null;
 }
 
 interface Lead {
@@ -118,33 +120,8 @@ export default function Reunioes() {
       const roomId = `NaHora-Instantanea-${Date.now()}`;
       const jitsiLink = `https://meet.jit.si/${roomId}`;
 
-      // Find lead or use null
+      // Find linked lead (optional — lead_id is now nullable in DB)
       const linkedLead = instantLeadId !== 'none' ? leads.find(l => l.id === instantLeadId) || null : null;
-
-      // Requires a lead_id - if none selected, we'll skip saving to DB or use first lead
-      if (!linkedLead && leads.length === 0) {
-        // Just open Jitsi without DB record
-        toast.info('Sala criada (sem vínculo com lead)');
-        const fakeMeeting: MeetingRow = {
-          id: crypto.randomUUID(),
-          title: instantTitle || 'Reunião Instantânea',
-          description: null,
-          meeting_date: new Date().toISOString(),
-          duration_minutes: 30,
-          jitsi_link: jitsiLink,
-          contact_name: null,
-          sdr_id: profile.id,
-          lead_id: '',
-          meeting_type: 'instant',
-          status: 'em_andamento',
-          created_at: new Date().toISOString(),
-        };
-        setActiveRoom({ meeting: fakeMeeting, lead: null, linkCopied: false });
-        setInstantOpen(false);
-        return;
-      }
-
-      const targetLeadId = linkedLead?.id || leads[0]?.id;
 
       const { data: newMeeting, error } = await supabase.from('meetings').insert({
         title: instantTitle || 'Reunião Instantânea',
@@ -153,37 +130,47 @@ export default function Reunioes() {
         jitsi_link: jitsiLink,
         sdr_id: profile.id,
         created_by: profile.id,
-        lead_id: targetLeadId,
+        lead_id: linkedLead?.id || null,   // nullable — sem lead é permitido
         meeting_type: 'instant',
         status: 'em_andamento',
       } as any).select().single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Instant meeting insert error:', error);
+        // Fallback: open Jitsi without DB record if insert fails
+        if (error.message?.includes('row-level security') || error.message?.includes('not-null')) {
+          toast.info('Sala aberta (sem registo — verifique permissões)');
+          window.open(`${jitsiLink}#config.startWithVideoMuted=false&config.prejoinPageEnabled=false`, '_blank');
+          setInstantOpen(false);
+          return;
+        }
+        throw error;
+      }
 
-      // Log to lead timeline
+      // Log to lead timeline only if linked
       if (linkedLead) {
         await supabase.from('lead_timeline').insert({
           lead_id: linkedLead.id,
           author_id: profile.id,
-          content: `🎥 Reunião instantânea iniciada: "${instantTitle}" — Link: ${jitsiLink}`,
+          content: `🎥 Reunião instantânea iniciada: "${instantTitle || 'Reunião Instantânea'}" — Link: ${jitsiLink}`,
           contact_type: 'meeting',
         });
       }
 
-      toast.success('Sala criada!');
+      toast.success('Sala criada! A abrir no Jitsi...');
       setActiveRoom({ meeting: newMeeting as MeetingRow, lead: linkedLead, linkCopied: false });
       setInstantOpen(false);
       fetchAll();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error);
-      toast.error('Erro ao criar reunião instantânea');
+      toast.error(error?.message || 'Erro ao criar reunião instantânea');
     } finally {
       setCreatingInstant(false);
     }
   };
 
   const enterMeeting = (meeting: MeetingRow) => {
-    const lead = leadMap[meeting.lead_id] || null;
+    const lead = meeting.lead_id ? (leadMap[meeting.lead_id] || null) : null;
     setActiveRoom({ meeting, lead, linkCopied: false });
   };
 
@@ -408,7 +395,7 @@ export default function Reunioes() {
               </TableHeader>
               <TableBody>
                 {filteredMeetings.map((meeting) => {
-                  const lead = leadMap[meeting.lead_id];
+                  const lead = meeting.lead_id ? (leadMap[meeting.lead_id] || null) : null;
                   return (
                     <TableRow key={meeting.id}>
                       <TableCell className="font-medium">

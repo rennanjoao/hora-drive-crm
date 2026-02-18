@@ -42,22 +42,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchUserData = async (userId: string, userEmail?: string, userFullName?: string) => {
     try {
       // Fetch profile
-      let { data: profileData } = await supabase
+      let { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('user_id', userId)
         .maybeSingle();
 
-      // Auto-provision profile if it doesn't exist (e.g. after a remix)
-      if (!profileData) {
+      // Auto-provision profile if it doesn't exist
+      if (!profileData && !profileError) {
         const email = userEmail || '';
         const fullName = userFullName || email;
-        const { data: newProfile } = await supabase
+        const { data: newProfile, error: insertProfileError } = await supabase
           .from('profiles')
-          .insert({ user_id: userId, email, full_name: fullName })
+          .upsert({ user_id: userId, email, full_name: fullName }, { onConflict: 'user_id' })
           .select('*')
           .single();
-        profileData = newProfile;
+        if (!insertProfileError) {
+          profileData = newProfile;
+        } else {
+          // Profile may have been created by trigger — try to fetch again
+          const { data: retryProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('user_id', userId)
+            .maybeSingle();
+          profileData = retryProfile;
+        }
       }
 
       if (profileData) {
@@ -65,25 +75,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // Fetch role
-      let { data: roleData } = await supabase
+      let { data: roleData, error: roleError } = await supabase
         .from('user_roles')
         .select('role')
         .eq('user_id', userId)
         .maybeSingle();
 
       // Auto-provision role if it doesn't exist
-      if (!roleData) {
-        // First user gets admin, rest get sdr
+      if (!roleData && !roleError) {
         const { count } = await supabase
           .from('user_roles')
           .select('id', { count: 'exact', head: true });
         const assignedRole: AppRole = (count === 0 || count === null) ? 'admin' : 'sdr';
-        const { data: newRole } = await supabase
+        const { data: newRole, error: insertRoleError } = await supabase
           .from('user_roles')
-          .insert({ user_id: userId, role: assignedRole })
+          .upsert({ user_id: userId, role: assignedRole }, { onConflict: 'user_id,role' })
           .select('role')
           .single();
-        roleData = newRole;
+        if (!insertRoleError) {
+          roleData = newRole;
+        } else {
+          // Role may have been created in parallel — fetch the existing one
+          const { data: retryRole } = await supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', userId)
+            .maybeSingle();
+          roleData = retryRole;
+        }
       }
 
       if (roleData) {
@@ -95,34 +114,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          // Defer data fetch to avoid deadlock
-          setTimeout(() => {
-            fetchUserData(
-              session.user.id,
-              session.user.email,
-              session.user.user_metadata?.full_name
-            );
-          }, 0);
-        } else {
-          setProfile(null);
-          setRole(null);
-        }
-        setLoading(false);
-      }
-    );
+    let initialized = false;
 
-    // THEN check for existing session
+    // THEN check for existing session first (synchronous)
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
-      if (session?.user) {
+      if (session?.user && !initialized) {
+        initialized = true;
         fetchUserData(
           session.user.id,
           session.user.email,
@@ -131,6 +130,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setLoading(false);
     });
+
+    // Set up auth state listener for future changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          // Only fetch if this is a new login event or first initialization
+          if (!initialized || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            if (!initialized) initialized = true;
+            // Defer data fetch to avoid deadlock
+            setTimeout(() => {
+              fetchUserData(
+                session.user.id,
+                session.user.email,
+                session.user.user_metadata?.full_name
+              );
+            }, 0);
+          }
+        } else {
+          initialized = false;
+          setProfile(null);
+          setRole(null);
+          setLoading(false);
+        }
+      }
+    );
 
     return () => subscription.unsubscribe();
   }, []);

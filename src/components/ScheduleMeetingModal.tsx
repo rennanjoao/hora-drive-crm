@@ -107,9 +107,16 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
   }, [isAdmin]);
 
   const handleSave = async () => {
-    if (!activeLead || !profile || !selectedDate || !form.start_time) {
-      if (!activeLead) toast.error('Selecione uma empresa antes de agendar.');
-      if (!selectedDate) toast.error('Selecione uma data para a reunião.');
+    if (!profile) {
+      toast.error('Utilizador não autenticado. Faça login novamente.');
+      return;
+    }
+    if (!selectedDate) {
+      toast.error('Selecione uma data para a reunião.');
+      return;
+    }
+    if (!form.title.trim()) {
+      toast.error('Insira um título para a reunião.');
       return;
     }
 
@@ -118,13 +125,18 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
     setSaving(true);
     try {
       const meetingDate = new Date(`${format(selectedDate, 'yyyy-MM-dd')}T${form.start_time}`);
+      
+      // Generate unique Jitsi room name
+      const companySlug = activeLead
+        ? sanitizeForUrl(activeLead.nome_fantasia || activeLead.razao_social)
+        : 'NaHora';
       const dateStr = format(selectedDate, 'ddMMyyyy');
-      const companySlug = sanitizeForUrl(activeLead.nome_fantasia || activeLead.razao_social);
       const uniqueId = Math.random().toString(36).substring(2, 7).toUpperCase();
       const jitsiLink = `https://meet.jit.si/NaHora-${companySlug}-${dateStr}-${uniqueId}`;
 
-      const { error } = await supabase.from('meetings').insert({
-        lead_id: activeLead.id,
+      // Insert meeting — lead_id is now nullable in the DB
+      const { error: meetingError } = await supabase.from('meetings').insert({
+        lead_id: activeLead?.id || null,
         sdr_id: sdrId,
         created_by: profile.id,
         title: form.title,
@@ -135,26 +147,39 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
         contact_name: form.contact_name || null,
         status: 'agendada',
         meeting_type: 'scheduled',
-      });
+      } as any);
 
-      if (error) throw error;
+      if (meetingError) {
+        console.error('Meeting insert error:', meetingError);
+        throw meetingError;
+      }
 
-      // Also add timeline entry
-      await supabase.from('lead_timeline').insert({
-        lead_id: activeLead.id,
-        author_id: profile.id,
-        content: `📅 Reunião agendada: ${form.title} — ${format(meetingDate, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })} — Link: ${jitsiLink}`,
-        contact_type: 'meeting',
-      });
+      // Log to lead timeline only if a lead is linked
+      if (activeLead) {
+        const { error: timelineError } = await supabase.from('lead_timeline').insert({
+          lead_id: activeLead.id,
+          author_id: profile.id,
+          content: `📅 Reunião agendada: ${form.title} — ${format(meetingDate, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })} — Link: ${jitsiLink}`,
+          contact_type: 'meeting',
+        });
+        if (timelineError) console.warn('Timeline insert warning:', timelineError);
+      }
 
-      toast.success('Reunião agendada com sucesso!');
+      toast.success('Reunião agendada com sucesso! 🎉');
       onOpenChange(false);
       setSelectedDate(undefined);
       setForm({ title: '', description: '', contact_name: '', start_time: '09:00', duration: '30', sdr_id: profile?.id || '' });
       onMeetingCreated?.();
     } catch (err: any) {
       console.error('Error creating meeting:', err);
-      toast.error(err?.message || 'Erro ao agendar reunião');
+      const msg = err?.message || '';
+      if (msg.includes('row-level security')) {
+        toast.error('Sem permissão para agendar reuniões. Verifique se está autenticado.');
+      } else if (msg.includes('violates not-null')) {
+        toast.error('Erro de dados: campo obrigatório em falta.');
+      } else {
+        toast.error(msg || 'Erro ao agendar reunião. Tente novamente.');
+      }
     } finally {
       setSaving(false);
     }
@@ -294,10 +319,10 @@ export function ScheduleMeetingModal({ open, onOpenChange, lead, onMeetingCreate
           </div>
 
           {!activeLead && (
-            <p className="text-xs text-destructive text-center">⚠️ Selecione uma empresa para habilitar o agendamento</p>
+            <p className="text-xs text-muted-foreground text-center">💡 Sem empresa selecionada — a reunião será criada sem vínculo a um lead.</p>
           )}
 
-          <Button onClick={handleSave} className="w-full" disabled={saving || !form.title || !selectedDate || !activeLead}>
+          <Button onClick={handleSave} className="w-full" disabled={saving || !form.title.trim() || !selectedDate}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Video className="h-4 w-4 mr-2" />}
             Agendar Reunião
           </Button>

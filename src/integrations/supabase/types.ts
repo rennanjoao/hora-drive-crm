@@ -443,12 +443,14 @@ export type Database = {
           duration_minutes: number
           id: string
           jitsi_link: string
-          lead_id: string
+          lead_id: string | null
           meeting_date: string
           meeting_type: string
+          recording_url: string | null
           sdr_id: string
           status: string
           title: string
+          transcription: string | null
           updated_at: string
         }
         Insert: {
@@ -459,12 +461,14 @@ export type Database = {
           duration_minutes?: number
           id?: string
           jitsi_link: string
-          lead_id: string
+          lead_id?: string | null
           meeting_date: string
           meeting_type?: string
+          recording_url?: string | null
           sdr_id: string
           status?: string
           title: string
+          transcription?: string | null
           updated_at?: string
         }
         Update: {
@@ -475,12 +479,14 @@ export type Database = {
           duration_minutes?: number
           id?: string
           jitsi_link?: string
-          lead_id?: string
+          lead_id?: string | null
           meeting_date?: string
           meeting_type?: string
+          recording_url?: string | null
           sdr_id?: string
           status?: string
           title?: string
+          transcription?: string | null
           updated_at?: string
         }
         Relationships: [
