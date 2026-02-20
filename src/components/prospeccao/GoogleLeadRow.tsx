@@ -8,6 +8,7 @@ interface GoogleLeadRowProps {
   place: GooglePlaceBasic;
   selected: boolean;
   isHighlighted: boolean;
+  isImported?: boolean;
   onToggle: () => void;
   onClick: () => void;
 }
@@ -25,7 +26,7 @@ function businessTypeLabel(types?: string[]): string | null {
   return null;
 }
 
-export function GoogleLeadRow({ place, selected, isHighlighted, onToggle, onClick }: GoogleLeadRowProps) {
+export function GoogleLeadRow({ place, selected, isHighlighted, isImported, onToggle, onClick }: GoogleLeadRowProps) {
   const typeLabel = businessTypeLabel(place.types);
   const isActive = place.business_status === 'OPERATIONAL';
   const reviewCount = place.user_ratings_total;

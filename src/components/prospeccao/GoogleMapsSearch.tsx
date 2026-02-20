@@ -5,8 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
 import {
-  Search, Loader2, Filter, MapPin, Map, AlertTriangle, Download, ChevronDown, RotateCcw, MessageSquare
+  Search, Loader2, Filter, MapPin, Map, AlertTriangle, Download,
+  ChevronDown, RotateCcw, MessageSquare, Mail,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { GooglePlaceBasic } from '@/hooks/useGoogleMaps';
@@ -15,7 +18,6 @@ import { GoogleLeadRow } from './GoogleLeadRow';
 import { GoogleLeadDetailPanel } from './GoogleLeadDetailPanel';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useBrasilAPI } from '@/hooks/useBrasilAPI';
 
 const NICHOS_SUGERIDOS = [
   'Supermercado', 'Distribuidora', 'Construtora', 'Material de Construção',
@@ -24,9 +26,17 @@ const NICHOS_SUGERIDOS = [
   'Gráfica', 'Laticínios', 'Fábrica', 'Armazém',
 ];
 
+// Multiples of 50 from 0 to 500
+const REVIEW_STEPS = [0, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500];
+
+function extractCity(address: string): string | null {
+  const parts = address.split(',');
+  if (parts.length >= 2) return parts[parts.length - 2].trim().split('-')[0].trim();
+  return null;
+}
+
 export function GoogleMapsSearch() {
   const { profile } = useAuth();
-  const { searchCNPJ } = useBrasilAPI();
 
   const {
     nicho, setNicho,
@@ -47,18 +57,20 @@ export function GoogleMapsSearch() {
   const [importedIds, setImportedIds] = useState<Set<string>>(new Set());
 
   // ── Filters ─────────────────────────────────────────────────────────────
-  const [filterMinReviews, setFilterMinReviews] = useState(false);
-  // "apenas com email" is handled post-detail import (we don't have email at list stage),
-  // but we'll keep UI and note it filters by known email in detail
-  const [filterWithEmail] = useState(false); // placeholder; real email comes from details
+  const [minReviews, setMinReviews] = useState(0);       // slider value 0-500
+  const [filterWithEmail] = useState(false);             // future: after detail fetch
+
+  // ── Tag assignment ───────────────────────────────────────────────────────
+  const [tagInput, setTagInput] = useState('');
+  const [assigningTag, setAssigningTag] = useState(false);
 
   const displayedResults: GooglePlaceBasic[] = useMemo(() => {
     let list = searchResults;
-    if (filterMinReviews) {
-      list = list.filter(p => (p.user_ratings_total ?? 0) >= 500);
+    if (minReviews > 0) {
+      list = list.filter(p => (p.user_ratings_total ?? 0) >= minReviews);
     }
     return list;
-  }, [searchResults, filterMinReviews]);
+  }, [searchResults, minReviews]);
 
   // ── Selection helpers ────────────────────────────────────────────────────
   const toggleSelect = (placeId: string) => {
@@ -84,7 +96,7 @@ export function GoogleMapsSearch() {
     await handleSearch();
   };
 
-  // ── Bulk import with BrasilAPI enrichment ────────────────────────────────
+  // ── Bulk import ──────────────────────────────────────────────────────────
   const handleBulkImport = async () => {
     if (!profile || selectedIds.size === 0) return;
     setImportingBulk(true);
@@ -96,12 +108,8 @@ export function GoogleMapsSearch() {
         const place = displayedResults.find(p => p.place_id === placeId);
         if (!place) continue;
 
-        // Dedup by place_id
         const { data: existing } = await supabase
-          .from('leads')
-          .select('id')
-          .eq('place_id', placeId)
-          .maybeSingle();
+          .from('leads').select('id').eq('place_id', placeId).maybeSingle();
 
         if (existing) {
           skipped++;
@@ -109,9 +117,6 @@ export function GoogleMapsSearch() {
           continue;
         }
 
-        // Try to get place details to find CNPJ if available (via phone or address)
-        // For bulk import we save basic data; BrasilAPI needs a known CNPJ
-        // We'll import basic data and flag enrichment_needed
         const { error } = await supabase.from('leads').insert({
           razao_social: place.name,
           nome_fantasia: place.name,
@@ -130,12 +135,46 @@ export function GoogleMapsSearch() {
         }
       }
 
-      toast.success(`${imported} leads importados!${skipped > 0 ? ` ${skipped} já existiam no CRM.` : ''}`);
+      toast.success(`${imported} leads importados!${skipped > 0 ? ` ${skipped} já existiam.` : ''}`);
       setSelectedIds(new Set());
-    } catch (err) {
+    } catch {
       toast.error('Erro durante importação em massa');
     } finally {
       setImportingBulk(false);
+    }
+  };
+
+  // ── Assign automation tag to selected leads (after import) ───────────────
+  const handleAssignTag = async () => {
+    if (!tagInput.trim() || selectedIds.size === 0) {
+      toast.error('Selecione leads e informe a tag');
+      return;
+    }
+    setAssigningTag(true);
+    try {
+      // Find imported leads by place_id
+      const { data: leadsData } = await supabase
+        .from('leads')
+        .select('id, place_id')
+        .in('place_id', Array.from(selectedIds));
+
+      if (!leadsData?.length) {
+        toast.error('Nenhum lead importado selecionado. Importe primeiro.');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('leads')
+        .update({ status_automacao: tagInput.trim() })
+        .in('id', leadsData.map(l => l.id));
+
+      if (error) throw error;
+      toast.success(`Tag "${tagInput}" atribuída a ${leadsData.length} lead(s)!`);
+      setTagInput('');
+    } catch {
+      toast.error('Erro ao atribuir tag');
+    } finally {
+      setAssigningTag(false);
     }
   };
 
@@ -153,7 +192,7 @@ export function GoogleMapsSearch() {
             Busca por Google Maps
           </CardTitle>
           <CardDescription>
-            Busque estabelecimentos por nicho e localização. Detalhes (telefone, foto) carregados apenas ao selecionar — economizando créditos.
+            Busque estabelecimentos por nicho e localização. Detalhes carregados sob demanda para economizar créditos.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -206,11 +245,10 @@ export function GoogleMapsSearch() {
 
           <div className="flex gap-2 flex-wrap">
             <Button onClick={onSearch} disabled={loadingSearch} className="gap-2">
-              {loadingSearch ? (
-                <><Loader2 className="h-4 w-4 animate-spin" />Buscando...</>
-              ) : (
-                <><Search className="h-4 w-4" />Buscar no Google Maps</>
-              )}
+              {loadingSearch
+                ? <><Loader2 className="h-4 w-4 animate-spin" />Buscando...</>
+                : <><Search className="h-4 w-4" />Buscar no Google Maps</>
+              }
             </Button>
             {hasResults && (
               <Button variant="ghost" size="sm" onClick={reset} className="gap-1.5">
@@ -234,7 +272,7 @@ export function GoogleMapsSearch() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 items-start">
           {/* Left: List */}
           <Card className="overflow-hidden">
-            <CardHeader className="pb-2 px-3 pt-3 space-y-2">
+            <CardHeader className="pb-2 px-3 pt-3 space-y-3">
               {/* Restored state notice */}
               {isRestored && searchResults.length > 0 && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-2.5 py-1.5">
@@ -243,49 +281,114 @@ export function GoogleMapsSearch() {
                 </div>
               )}
 
-              {/* Filters row */}
-              <div className="flex items-center gap-3 flex-wrap">
+              {/* Filters */}
+              <div className="space-y-2">
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
                   <Filter className="h-3 w-3" />
-                  Filtros:
+                  Filtros de Qualidade
                 </span>
-                <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-                  <Checkbox
-                    checked={filterMinReviews}
-                    onCheckedChange={v => setFilterMinReviews(!!v)}
-                    className="h-3.5 w-3.5"
+
+                {/* Review count slider */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs flex items-center gap-1">
+                      <MessageSquare className="h-3 w-3" />
+                      Mín. comentários
+                    </Label>
+                    <span className="text-xs font-semibold text-primary">
+                      {minReviews >= 500 ? '500+' : minReviews === 0 ? 'Todos' : `≥ ${minReviews}`}
+                    </span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={500}
+                    step={50}
+                    value={[minReviews]}
+                    onValueChange={([v]) => setMinReviews(v)}
+                    className="w-full"
                   />
-                  <MessageSquare className="h-3 w-3 text-muted-foreground" />
-                  Mín. 500 comentários
-                </label>
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>0</span>
+                    {[100, 200, 300, 400].map(v => <span key={v}>{v}</span>)}
+                    <span>500+</span>
+                  </div>
+                </div>
+
+                {/* Interval select (alternative approach for precision) */}
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs shrink-0">Ou selecione:</Label>
+                  <Select
+                    value={String(minReviews)}
+                    onValueChange={v => setMinReviews(Number(v))}
+                  >
+                    <SelectTrigger className="h-7 text-xs flex-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REVIEW_STEPS.map(s => (
+                        <SelectItem key={s} value={String(s)} className="text-xs">
+                          {s === 0 ? 'Todos os resultados' : s === 500 ? '500+ comentários' : `≥ ${s} comentários`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {/* Selection + bulk import row */}
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
                   <Checkbox
                     checked={allSelected}
-                    onCheckedChange={(checked) => selectAll(!!checked)}
+                    onCheckedChange={checked => selectAll(!!checked)}
                   />
                   <span className="text-xs text-muted-foreground">
                     {selectedCount > 0
                       ? `${selectedCount} selecionados`
-                      : `${displayedResults.length} resultado${displayedResults.length !== 1 ? 's' : ''}${filterMinReviews && searchResults.length !== displayedResults.length ? ` (de ${searchResults.length})` : ''}`
+                      : `${displayedResults.length} resultado${displayedResults.length !== 1 ? 's' : ''}${
+                          minReviews > 0 && searchResults.length !== displayedResults.length
+                            ? ` (de ${searchResults.length})`
+                            : ''
+                        }`
                     }
                   </span>
                 </div>
                 {selectedCount > 0 && (
                   <Button size="sm" onClick={handleBulkImport} disabled={importingBulk}>
-                    {importingBulk ? (
-                      <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Importando...</>
-                    ) : (
-                      <><Download className="h-3.5 w-3.5 mr-1.5" />Importar {selectedCount}</>
-                    )}
+                    {importingBulk
+                      ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Importando...</>
+                      : <><Download className="h-3.5 w-3.5 mr-1.5" />Importar {selectedCount}</>
+                    }
                   </Button>
                 )}
               </div>
+
+              {/* Tag assignment row (visible when items selected) */}
+              {selectedCount > 0 && (
+                <div className="flex gap-2 items-center bg-muted/50 rounded-lg px-2.5 py-2">
+                  <Mail className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <Input
+                    className="h-7 text-xs flex-1"
+                    placeholder="Tag de automação (ex: supermercados-sp)"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleAssignTag()}
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 text-xs shrink-0"
+                    onClick={handleAssignTag}
+                    disabled={assigningTag || !tagInput.trim()}
+                  >
+                    {assigningTag ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Gerar Lista'}
+                  </Button>
+                </div>
+              )}
             </CardHeader>
+
             <Separator />
+
             <div className="overflow-y-auto max-h-[600px] p-2 space-y-0.5">
               {displayedResults.map(place => (
                 <GoogleLeadRow
@@ -293,30 +396,29 @@ export function GoogleMapsSearch() {
                   place={place}
                   selected={selectedIds.has(place.place_id)}
                   isHighlighted={selectedPlace?.place_id === place.place_id}
+                  isImported={importedIds.has(place.place_id)}
                   onToggle={() => toggleSelect(place.place_id)}
                   onClick={() => selectPlace(place)}
                 />
               ))}
               {displayedResults.length === 0 && searchResults.length > 0 && (
                 <div className="py-6 text-center text-xs text-muted-foreground">
-                  Nenhum resultado passa pelos filtros ativos
+                  Nenhum resultado passa pelos filtros ativos.
+                  Reduza o mínimo de comentários ou remova o filtro.
                 </div>
               )}
-              {/* Load more button */}
               {nextPageToken && (
                 <div className="pt-2 pb-1">
                   <Button
-                    variant="outline"
-                    size="sm"
+                    variant="outline" size="sm"
                     className="w-full text-xs gap-1.5"
                     onClick={loadMore}
                     disabled={loadingMore}
                   >
-                    {loadingMore ? (
-                      <><Loader2 className="h-3.5 w-3.5 animate-spin" />Carregando mais...</>
-                    ) : (
-                      <><ChevronDown className="h-3.5 w-3.5" />Carregar mais resultados</>
-                    )}
+                    {loadingMore
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Carregando mais...</>
+                      : <><ChevronDown className="h-3.5 w-3.5" />Carregar mais resultados</>
+                    }
                   </Button>
                 </div>
               )}
@@ -360,11 +462,4 @@ export function GoogleMapsSearch() {
       )}
     </div>
   );
-}
-
-// Helper
-function extractCity(address: string): string | null {
-  const parts = address.split(',');
-  if (parts.length >= 2) return parts[parts.length - 2].trim().split('-')[0].trim();
-  return null;
 }
