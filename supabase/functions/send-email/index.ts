@@ -5,11 +5,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const SENDERS: Record<string, { name: string; email: string }> = {
-  felipe:  { name: 'Felipe — Na Hora Transporte', email: 'onboarding@resend.dev' },
-  mabile:  { name: 'Mabile — Na Hora Transporte', email: 'onboarding@resend.dev' },
-  sistema: { name: 'Na Hora Transporte',           email: 'onboarding@resend.dev' },
-};
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isValidEmail(v: string) { return EMAIL_RE.test(v.trim()); }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -25,19 +22,35 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    const body = await req.json();
     const {
-      campaign_id, step_id, lead_id, sdr_id,
-      to_email, subject, body_html,
-      sender = 'sistema',          // 'felipe' | 'mabile' | 'sistema'
-      custom_from_name,            // optional override name
-      custom_from_email,           // optional override email (must be Resend-verified)
-    } = await req.json();
+      campaign_id,
+      step_id,
+      lead_id,
+      sdr_id,
+      to_email,
+      subject,
+      body_html,
+      from_name,      // free-form sender name (replaces fixed presets)
+      from_email,     // free-form sender email (must be Resend-verified)
+    } = body;
 
+    // ── Input validation ─────────────────────────────────────────────────────
     if (!to_email || !subject || !body_html) {
       throw new Error('Missing required fields: to_email, subject, body_html');
     }
+    if (!isValidEmail(to_email)) {
+      throw new Error(`Invalid to_email: "${to_email}"`);
+    }
 
-    // Resolve RESEND_API_KEY: prefer api_settings for the SDR, fallback to env secret
+    const resolvedFromName  = (from_name  || '').trim() || 'Equipe de Vendas';
+    const resolvedFromEmail = (from_email || '').trim();
+
+    if (!resolvedFromEmail || !isValidEmail(resolvedFromEmail)) {
+      throw new Error(`Invalid from_email: "${resolvedFromEmail}". Configure o e-mail do remetente em Automação → Listas.`);
+    }
+
+    // ── Resolve RESEND_API_KEY ────────────────────────────────────────────────
     let resendApiKey = Deno.env.get('RESEND_API_KEY');
     if (sdr_id) {
       const { data: settings } = await supabase
@@ -47,38 +60,22 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (settings?.resend_api_key) resendApiKey = settings.resend_api_key;
     }
+    if (!resendApiKey) throw new Error('RESEND_API_KEY is not configured');
 
-    if (!resendApiKey) {
-      throw new Error('RESEND_API_KEY is not configured');
-    }
-
-    // Resolve sender
-    const senderConfig = SENDERS[sender] ?? SENDERS['sistema'];
-    const fromName  = custom_from_name  || senderConfig.name;
-    const fromEmail = custom_from_email || senderConfig.email;
-
-    // Create send record with tracking ID
+    // ── Create send record ────────────────────────────────────────────────────
     const { data: sendRecord, error: insertError } = await supabase
       .from('email_sends')
-      .insert({
-        campaign_id,
-        step_id,
-        lead_id,
-        sdr_id,
-        status: 'enviando',
-      })
+      .insert({ campaign_id, step_id, lead_id, sdr_id, status: 'enviando' })
       .select('id, tracking_id')
       .single();
 
     if (insertError) throw insertError;
 
-    // Build tracking pixel URL
+    // ── Tracking pixel ────────────────────────────────────────────────────────
     const trackingPixelUrl = `${supabaseUrl}/functions/v1/track-email?tid=${sendRecord.tracking_id}`;
-
-    // Inject tracking pixel into email body
     const htmlWithTracking = `${body_html}<img src="${trackingPixelUrl}" width="1" height="1" style="display:none" alt="" />`;
 
-    // Send email via Resend
+    // ── Send via Resend ────────────────────────────────────────────────────────
     const resendResponse = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -86,7 +83,7 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: `${fromName} <${fromEmail}>`,
+        from: `${resolvedFromName} <${resolvedFromEmail}>`,
         to: [to_email],
         subject,
         html: htmlWithTracking,
@@ -96,20 +93,14 @@ Deno.serve(async (req) => {
     const resendData = await resendResponse.json();
 
     if (!resendResponse.ok) {
-      await supabase
-        .from('email_sends')
-        .update({ status: 'erro' })
-        .eq('id', sendRecord.id);
+      await supabase.from('email_sends').update({ status: 'erro' }).eq('id', sendRecord.id);
       throw new Error(`Resend API error [${resendResponse.status}]: ${JSON.stringify(resendData)}`);
     }
 
-    // Update send record
+    // ── Update send record ────────────────────────────────────────────────────
     await supabase
       .from('email_sends')
-      .update({
-        status: 'enviado',
-        sent_at: new Date().toISOString(),
-      })
+      .update({ status: 'enviado', sent_at: new Date().toISOString() })
       .eq('id', sendRecord.id);
 
     return new Response(JSON.stringify({ success: true, send_id: sendRecord.id }), {
@@ -125,4 +116,3 @@ Deno.serve(async (req) => {
     });
   }
 });
-
